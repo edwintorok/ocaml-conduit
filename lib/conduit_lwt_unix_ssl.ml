@@ -44,9 +44,10 @@ let with_socket sockaddr f =
 
 module Client = struct
   (* SSL TCP connection *)
-  let t = Ssl.create_context Ssl.TLSv1 Ssl.Client_context
+  let default_ctx = Ssl.create_context Ssl.SSLv23 Ssl.Client_context
+  let () = Ssl.disable_protocols default_ctx [Ssl.SSLv23]
 
-  let connect ?(ctx=t) ?src sa =
+  let connect ?(ctx=default_ctx) ?src sa =
     with_socket sa (fun fd ->
         let () =
           match src with
@@ -61,15 +62,16 @@ end
 
 module Server = struct
 
-  let t = Ssl.create_context Ssl.TLSv1 Ssl.Server_context
+  let default_ctx = Ssl.create_context Ssl.SSLv23 Ssl.Server_context
+  let () = Ssl.disable_protocols default_ctx [Ssl.SSLv23]
 
-  let accept ?(ctx=t) fd =
+  let accept ?(ctx=default_ctx) fd =
     Lwt_unix.accept fd >>= fun (afd, _) ->
     Lwt.try_bind (fun () -> Lwt_ssl.ssl_accept afd ctx)
       (fun sock -> return (chans_of_fd sock))
       (fun exn -> Lwt_unix.close afd >>= fun () -> fail exn)
 
-  let listen ?(ctx=t) ?(nconn=20) ?password ~certfile ~keyfile sa =
+  let listen ?(ctx=default_ctx) ?(nconn=20) ?password ~certfile ~keyfile sa =
     let fd = Lwt_unix.socket (Unix.domain_of_sockaddr sa) Unix.SOCK_STREAM 0 in
     Lwt_unix.(setsockopt fd SO_REUSEADDR true);
     Lwt_unix.bind fd sa;
