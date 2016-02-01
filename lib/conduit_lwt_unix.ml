@@ -196,12 +196,18 @@ module Sockaddr_server = struct
         | Unix.Unix_error(Unix.EOPNOTSUPP, _, _) -> ()
         | e -> raise e );
     chans_of_fd client >>= fun (client, ic, oc) ->
-    let c = callback (flow_of_fd client peeraddr) ic oc in
-    let events = match timeout with
-      |None -> [c]
-      |Some t -> [c; (Lwt_unix.sleep (float_of_int t)) ] in
-    let _ = Lwt.pick events >>= fun () -> close (ic,oc) in
-    return ()
+    Lwt.finalize (fun () ->
+        let c = callback (flow_of_fd client peeraddr) ic oc in
+        let events = match timeout with
+          |None -> [c]
+          |Some t -> [c; (Lwt_unix.sleep (float_of_int t)) ] in
+        Lwt.pick events)
+      (fun () -> close (ic,oc))
+
+  let with_safe_close f ((fd,_) as conn) =
+    let _ = Lwt.catch (fun () -> f conn)
+        (fun e -> safe_close_unix fd >>= fun () -> fail e) in
+    return_unit
 
   let init ~on ?(stop = fst (Lwt.wait ())) ?timeout callback =
     let cont = ref true in
@@ -217,8 +223,8 @@ module Sockaddr_server = struct
         Lwt.cancel accept;
         Lwt.return_unit
       | `Accept v ->
-        process_accept ?timeout callback v >>= fun () ->
-        loop ()
+        with_safe_close (process_accept ?timeout callback) v >>=
+        loop
     in
     Lwt.finalize loop (fun () -> Lwt_unix.close s)
 end
