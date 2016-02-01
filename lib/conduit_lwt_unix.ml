@@ -161,15 +161,21 @@ let init ?src ?(tls_server_key=`None) () =
     | {ai_addr;_}::_ -> return { src=Some ai_addr; tls_server_key }
     | [] -> fail (Failure "Invalid conduit source address specified")
 
+let ignore_exn exn =
+  if !debug then !debug_print "safe: ignoring exception %s" (Printexc.to_string exn);
+  Lwt.return_unit
+let safe f = Lwt.catch f ignore_exn
+
 let safe_close t =
-  Lwt.catch
-    (fun () -> Lwt_io.close t)
-    (fun _ -> return_unit)
+  safe (fun () -> Lwt_io.close t)
+
+let safe_close_unix s =
+  safe (fun () -> Lwt_unix.close s)
 
 let with_socket sockaddr f =
   let fd = Lwt_unix.socket (Unix.domain_of_sockaddr sockaddr) Unix.SOCK_STREAM 0 in
   Lwt.catch (fun () -> f fd) (fun e ->
-      Lwt.catch (fun () -> Lwt_unix.close fd) (fun _ -> return_unit) >>= fun () ->
+      safe_close_unix fd >>= fun () ->
       fail e
     )
 
