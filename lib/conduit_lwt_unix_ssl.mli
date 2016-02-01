@@ -31,31 +31,14 @@ end
 module Server : sig
   val default_ctx : Ssl.context
 
-  val accept :
+  val config :
     ?ctx:Ssl.context ->
+    ?password:(bool -> string) ->
+    certfile:string ->
+    keyfile:string -> unit -> Ssl.context Lwt.t
+
+  val chans_of_fd :
+    Ssl.context ->
     Lwt_unix.file_descr ->
     (Lwt_unix.file_descr * Lwt_io.input_channel * Lwt_io.output_channel) Lwt.t
-
-  val listen :
-    ?ctx:Ssl.context ->
-    ?nconn:int ->
-    ?password:(bool -> string) ->
-    certfile:string ->
-    keyfile:string -> Lwt_unix.sockaddr -> Lwt_unix.file_descr
-
-  val init :
-    ?ctx:Ssl.context ->
-    ?nconn:int ->
-    ?password:(bool -> string) ->
-    certfile:string ->
-    keyfile:string ->
-    ?stop:(unit Lwt.t) ->
-    ?timeout:int ->
-    Lwt_unix.sockaddr ->
-    (Lwt_unix.file_descr -> Lwt_io.input_channel -> Lwt_io.output_channel -> unit Lwt.t) ->
-    unit Lwt.t
 end
-
-val close :
-  Lwt_io.input_channel * Lwt_io.output_channel ->
-  unit Lwt.t

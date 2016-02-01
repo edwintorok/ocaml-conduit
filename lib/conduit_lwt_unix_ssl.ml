@@ -27,10 +27,6 @@ let chans_of_fd sock =
   let ic = Lwt_io.make ~mode:Lwt_io.input ~close (Lwt_ssl.read_bytes sock) in
   ((Lwt_ssl.get_fd sock), ic, oc)
 
-let close (ic, oc) =
-  safe_close oc >>= fun () ->
-  safe_close ic
-
 module Client = struct
   (* SSL TCP connection *)
   let default_ctx = Ssl.create_context Ssl.SSLv23 Ssl.Client_context
@@ -54,50 +50,14 @@ module Server = struct
   let default_ctx = Ssl.create_context Ssl.SSLv23 Ssl.Server_context
   let () = Ssl.disable_protocols default_ctx [Ssl.SSLv23]
 
-  let accept ?(ctx=default_ctx) fd =
-    Lwt_unix.accept fd >>= fun (afd, _) ->
-    Lwt.try_bind (fun () -> Lwt_ssl.ssl_accept afd ctx)
-      (fun sock -> return (chans_of_fd sock))
-      (fun exn -> Lwt_unix.close afd >>= fun () -> fail exn)
-
-  let listen ?(ctx=default_ctx) ?(nconn=20) ?password ~certfile ~keyfile sa =
-    let fd = Lwt_unix.socket (Unix.domain_of_sockaddr sa) Unix.SOCK_STREAM 0 in
-    Lwt_unix.(setsockopt fd SO_REUSEADDR true);
-    Lwt_unix.bind fd sa;
-    Lwt_unix.listen fd nconn;
+  let config ?(ctx=default_ctx) ?password ~certfile ~keyfile () =
     (match password with
      | None -> ()
      | Some fn -> Ssl.set_password_callback ctx fn);
     Ssl.use_certificate ctx certfile keyfile;
-    fd
+    Lwt.return ctx
 
-  let process_accept ~timeout callback (sa,ic,oc) =
-    let c = callback sa ic oc in
-    let events = match timeout with
-      | None -> [c]
-      | Some t -> [c; (Lwt_unix.sleep (float_of_int t)) ] in
-    Lwt.finalize (fun () ->  Lwt.pick events) (fun () -> close (ic,oc)) |> Lwt.ignore_result
-
-  let init ?ctx ?(nconn=20) ?password ~certfile ~keyfile
-    ?(stop = fst (Lwt.wait ())) ?timeout sa callback =
-    let s = listen ?ctx ~nconn ?password ~certfile ~keyfile sa in
-    let cont = ref true in
-    async (fun () ->
-      stop >>= fun () ->
-      cont := false;
-      return_unit
-    );
-    let rec loop () =
-      if not !cont then return_unit
-      else (
-        Lwt.catch
-          (fun () -> accept ?ctx s >|= process_accept ~timeout callback)
-          (function
-            | Lwt.Canceled -> cont := false; return_unit
-            | _ -> Lwt_unix.yield ())
-        >>= loop
-      )
-    in
-    loop ()
-
+  let chans_of_fd ctx afd =
+    Lwt_ssl.ssl_accept afd ctx  >|= fun sock ->
+    chans_of_fd sock
 end

@@ -28,21 +28,13 @@ module Client : sig
 end
 
 module Server : sig
-  val accept :
+  val config :
+    certfile:string ->
+    keyfile:string ->
+    unit -> Tls.Config.server Lwt.t
+
+  val chans_of_fd :
     Tls.Config.server ->
     Lwt_unix.file_descr ->
     (Lwt_unix.file_descr * Lwt_io.input_channel * Lwt_io.output_channel) Lwt.t
-
-  val listen :
-    int -> Lwt_unix.sockaddr -> Lwt_unix.file_descr
-
-  val init :
-    ?nconn:int ->
-    certfile:string ->
-    keyfile:string ->
-    ?stop:(unit Lwt.t) ->
-    ?timeout:int ->
-    Lwt_unix.sockaddr ->
-    (Lwt_unix.file_descr -> Lwt_io.input_channel -> Lwt_io.output_channel -> unit Lwt.t) ->
-    unit Lwt.t
 end

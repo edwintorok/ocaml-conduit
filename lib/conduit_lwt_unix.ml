@@ -174,7 +174,6 @@ module Sockaddr_client = struct
 end
 
 module Sockaddr_server = struct
-
   let close (ic, oc) =
     safe_close oc >>= fun () ->
     safe_close ic
@@ -188,7 +187,13 @@ module Sockaddr_server = struct
       Lwt_unix.listen sock 15;
       sock) ()
 
-  let process_accept ?timeout callback (client,peeraddr) =
+  let chans_of_unix client =
+    Lwt.return (client,
+                Lwt_io.of_fd ~mode:Lwt_io.input client,
+                Lwt_io.of_fd ~mode:Lwt_io.output client
+               )
+
+  let process_accept ?timeout ?(chans_of_fd=chans_of_unix) callback (client,peeraddr) =
     ( try
         Lwt_unix.setsockopt client Lwt_unix.TCP_NODELAY true
       with
@@ -209,7 +214,7 @@ module Sockaddr_server = struct
         (fun e -> safe_close_unix fd >>= fun () -> fail e) in
     return_unit
 
-  let init ~on ?(stop = fst (Lwt.wait ())) ?timeout callback =
+  let init ~on ?(stop = fst (Lwt.wait ())) ?timeout ?chans_of_fd callback =
     let cont = ref true in
     let s = match on with
     | `Socket s -> s
@@ -223,7 +228,7 @@ module Sockaddr_server = struct
         Lwt.cancel accept;
         Lwt.return_unit
       | `Accept v ->
-        with_safe_close (process_accept ?timeout callback) v >>=
+        with_safe_close (process_accept ?timeout ?chans_of_fd callback) v >>=
         loop
     in
     Lwt.finalize loop (fun () -> Lwt_unix.close s)
@@ -312,9 +317,9 @@ IFDEF HAVE_LWT_SSL THEN
     | `No_password -> None
     | `Password fn -> Some fn
   in
-  Conduit_lwt_unix_ssl.Server.init
-    ?password ~certfile ~keyfile ?timeout ?stop sockaddr
-    (fun fd ic oc -> callback (TCP {fd;ip;port}) ic oc)
+  Conduit_lwt_unix_ssl.Server.config ?password ~certfile ~keyfile () >>= fun ctx ->
+  let chans_of_fd = Conduit_lwt_unix_ssl.Server.chans_of_fd ctx in
+  Sockaddr_server.init ~on:(`Sockaddr sockaddr) ?stop ?timeout ~chans_of_fd callback
 ELSE
   fail (Failure "No SSL support compiled into Conduit")
 END
@@ -327,9 +332,9 @@ IFDEF HAVE_LWT_TLS THEN
     | `No_password -> return ()
     | `Password _ -> fail (Failure "OCaml-TLS cannot handle encrypted pem files")
   ) >>= fun () ->
-  Conduit_lwt_tls.Server.init
-    ~certfile ~keyfile ?timeout ?stop sockaddr
-    (fun fd ic oc -> callback (TCP {fd;ip;port}) ic oc)
+  Conduit_lwt_tls.Server.config ~certfile ~keyfile () >>= fun ctx ->
+  let chans_of_fd = Conduit_lwt_tls.Server.chans_of_fd ctx in
+  Sockaddr_server.init ~on:(`Sockaddr sockaddr) ?stop ?timeout ~chans_of_fd callback
 ELSE
   fail (Failure "No TLS support compiled into Conduit")
 END

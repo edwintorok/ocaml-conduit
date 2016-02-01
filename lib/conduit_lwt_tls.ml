@@ -20,10 +20,6 @@ open Conduit_lwt_unix_common
 
 let _ = Nocrypto_entropy_lwt.initialize ()
 
-let close (ic, oc) =
-  safe_close oc >>= fun () ->
-  safe_close ic
-
 module Client = struct
   let connect ?src host sa =
     with_socket sa (fun fd ->
@@ -42,51 +38,12 @@ module Client = struct
 end
 
 module Server = struct
-  let listen nconn sa =
-    let fd = Lwt_unix.socket (Unix.domain_of_sockaddr sa) Unix.SOCK_STREAM 0 in
-    Lwt_unix.(setsockopt fd SO_REUSEADDR true);
-    Lwt_unix.bind fd sa;
-    Lwt_unix.listen fd nconn;
-    fd
+  let config ~certfile ~keyfile () =
+    X509_lwt.private_of_pems ~cert:certfile ~priv_key:keyfile >|= fun certificate ->
+    Tls.Config.server ~certificates:(`Single certificate) ()
 
-  let accept config s =
-    Lwt_unix.accept s >>= fun (fd, sa) ->
-    Lwt.try_bind (fun () ->
-        Tls_lwt.Unix.server_of_fd config fd)
-      (fun t ->
-        let ic, oc = Tls_lwt.of_t t in
-        return (fd, ic, oc))
-      (fun exn -> Lwt_unix.close fd >>= fun () -> fail exn)
-
-  let process_accept ~timeout callback (cfd, ic, oc) =
-    let c = callback cfd ic oc in
-    let events = match timeout with
-      | None -> [c]
-      | Some t -> [c; (Lwt_unix.sleep (float_of_int t)) ] in
-    Lwt.ignore_result (Lwt.pick events >>= fun () -> close (ic, oc))
-
-  let init ?(nconn=20) ~certfile ~keyfile
-        ?(stop = fst (Lwt.wait ())) ?timeout sa callback =
-    X509_lwt.private_of_pems ~cert:certfile ~priv_key:keyfile >>= fun certificate ->
-    let config = Tls.Config.server ~certificates:(`Single certificate) () in
-    let s = listen nconn sa in
-    let cont = ref true in
-    async (fun () ->
-      stop >>= fun () ->
-      cont := false;
-      return_unit
-    );
-    let rec loop () =
-      if not !cont then return_unit
-      else (
-        Lwt.catch
-          (fun () ->
-             accept config s >|= process_accept ~timeout callback)
-          (function
-            | Lwt.Canceled -> cont := false; return ()
-            | _ -> Lwt_unix.yield ())
-        >>= loop
-      )
-    in
-    loop ()
+  let chans_of_fd ctx fd =
+    Tls_lwt.Unix.server_of_fd ctx fd >|= fun t ->
+    let ic, oc = Tls_lwt.of_t t in
+    fd, ic, oc
 end
