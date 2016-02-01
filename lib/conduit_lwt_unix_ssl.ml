@@ -16,13 +16,9 @@
  *)
 
 open Lwt
+open Conduit_lwt_unix_common
 
 let _ = Ssl.init ()
-
-let safe_close t =
-  Lwt.catch
-    (fun () -> Lwt_io.close t)
-    (fun _ -> return_unit)
 
 let chans_of_fd sock =
   let shutdown () = Lwt_ssl.ssl_shutdown sock in
@@ -34,13 +30,6 @@ let chans_of_fd sock =
 let close (ic, oc) =
   safe_close oc >>= fun () ->
   safe_close ic
-
-let with_socket sockaddr f =
-  let fd = Lwt_unix.socket (Unix.domain_of_sockaddr sockaddr) Unix.SOCK_STREAM 0 in
-  Lwt.catch (fun () -> f fd) (fun e ->
-      Lwt.catch (fun () -> Lwt_unix.close fd) (fun _ -> return_unit) >>= fun () ->
-      fail e
-    )
 
 module Client = struct
   (* SSL TCP connection *)

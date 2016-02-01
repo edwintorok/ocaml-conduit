@@ -18,14 +18,7 @@
 
 open Lwt
 open Sexplib.Conv
-
-let debug = ref false
-let debug_print = ref Printf.eprintf
-let () =
-  try
-    ignore(Sys.getenv "CONDUIT_DEBUG");
-    debug := true
-  with Not_found -> ()
+open Conduit_lwt_unix_common
 
 type tls_lib = | OpenSSL | Native | No_tls with sexp
 let tls_library = ref No_tls
@@ -160,24 +153,6 @@ let init ?src ?(tls_server_key=`None) () =
     >>= function
     | {ai_addr;_}::_ -> return { src=Some ai_addr; tls_server_key }
     | [] -> fail (Failure "Invalid conduit source address specified")
-
-let ignore_exn exn =
-  if !debug then !debug_print "safe: ignoring exception %s" (Printexc.to_string exn);
-  Lwt.return_unit
-let safe f = Lwt.catch f ignore_exn
-
-let safe_close t =
-  safe (fun () -> Lwt_io.close t)
-
-let safe_close_unix s =
-  safe (fun () -> Lwt_unix.close s)
-
-let with_socket sockaddr f =
-  let fd = Lwt_unix.socket (Unix.domain_of_sockaddr sockaddr) Unix.SOCK_STREAM 0 in
-  Lwt.catch (fun () -> f fd) (fun e ->
-      safe_close_unix fd >>= fun () ->
-      fail e
-    )
 
 (* Vanilla sockaddr connection *)
 module Sockaddr_client = struct
