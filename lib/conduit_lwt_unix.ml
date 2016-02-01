@@ -154,6 +154,11 @@ let init ?src ?(tls_server_key=`None) () =
     | {ai_addr;_}::_ -> return { src=Some ai_addr; tls_server_key }
     | [] -> fail (Failure "Invalid conduit source address specified")
 
+let chans_of_fd fd =
+  let ic = Lwt_io.of_fd ~mode:Lwt_io.input fd in
+  let oc = Lwt_io.of_fd ~mode:Lwt_io.output fd in
+  return (fd, ic, oc)
+
 (* Vanilla sockaddr connection *)
 module Sockaddr_client = struct
   let connect ?src sa =
@@ -164,9 +169,7 @@ module Sockaddr_client = struct
           | Some src_sa -> Lwt_unix.bind fd src_sa
         in
         Lwt_unix.connect fd sa >>= fun () ->
-        let ic = Lwt_io.of_fd ~mode:Lwt_io.input fd in
-        let oc = Lwt_io.of_fd ~mode:Lwt_io.output fd in
-        return (fd, ic, oc)
+        chans_of_fd fd
       )
 end
 
@@ -192,8 +195,7 @@ module Sockaddr_server = struct
         (* This is expected for Unix domain sockets *)
         | Unix.Unix_error(Unix.EOPNOTSUPP, _, _) -> ()
         | e -> raise e );
-    let ic = Lwt_io.of_fd ~mode:Lwt_io.input client in
-    let oc = Lwt_io.of_fd ~mode:Lwt_io.output client in
+    chans_of_fd client >>= fun (client, ic, oc) ->
     let c = callback (flow_of_fd client peeraddr) ic oc in
     let events = match timeout with
       |None -> [c]
