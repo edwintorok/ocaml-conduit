@@ -174,6 +174,20 @@ module Sockaddr_client = struct
 end
 
 module Sockaddr_server = struct
+  (* File descriptors are a global resource so this has to be a global limit too *)
+  let maxactive = ref None
+  let active = ref 0
+
+  let cond = Lwt_condition.create ()
+  let connected () = incr active
+  let disconnected () = decr active; Lwt_condition.broadcast cond ()
+
+  let rec throttle () =
+    match !maxactive with
+    | Some limit when !active > limit ->
+      Lwt_condition.wait cond >>= throttle
+    | _ -> Lwt.return_unit
+
   let close (ic, oc) =
     safe_close oc >>= fun () ->
     safe_close ic
@@ -210,8 +224,9 @@ module Sockaddr_server = struct
       (fun () -> close (ic,oc))
 
   let with_safe_close f ((fd,_) as conn) =
-    let _ = Lwt.catch (fun () -> f conn)
+    let t = Lwt.catch (fun () -> f conn)
         (fun e -> safe_close_unix fd >>= fun () -> fail e) in
+    Lwt.on_termination t disconnected;
     return_unit
 
   let init ~on ?(stop = fst (Lwt.wait ())) ?timeout ?chans_of_fd callback =
@@ -221,6 +236,8 @@ module Sockaddr_server = struct
     | `Sockaddr sockaddr -> init_socket sockaddr in
     let stop' = Lwt.map (fun () -> `Stop) stop in
     let rec loop () =
+      connected ();
+      throttle () >>= fun () ->
       let accept = Lwt_unix.accept s in
       Lwt.choose [Lwt.map (fun v -> `Accept v) accept;
                   stop'] >>= function
@@ -233,6 +250,10 @@ module Sockaddr_server = struct
     in
     Lwt.finalize loop (fun () -> Lwt_unix.close s)
 end
+
+let set_max_active maxactive =
+  Sockaddr_server.maxactive := Some maxactive;
+  Lwt_condition.broadcast Sockaddr_server.cond ()
 
 (** TLS client connection functions *)
 
