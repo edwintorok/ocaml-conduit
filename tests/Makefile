@@ -8,3 +8,6 @@ mirage:
 
 async:
 	make -C async
+
+unix:
+	make -C unix
